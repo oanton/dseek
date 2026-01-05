@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# DSEEK runtime data (not committed for this repo)
+.dseek/
+
+# AI tools (Claude Code, Cursor, etc.)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.cursorrules
+.cursor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.test-*/
+
+# Transformers.js model cache (downloaded at runtime)
+.cache/
+
+# Editor backup files
+*.bak
+*.orig
+
+# Package managers
+.npm/
+.yarn/
+
+# macOS quarantine attribute files
+._*

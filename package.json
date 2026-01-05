@@ -1,0 +1,63 @@
+{
+  "name": "@dseek/cli",
+  "version": "1.0.0",
+  "description": "Local-first documentation search CLI with hybrid retrieval",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "dseek": "./bin/dseek.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx bin/dseek.ts",
+    "build": "esbuild bin/dseek.ts --bundle --platform=node --format=esm --outfile=dist/dseek.js",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:full": "./scripts/test-with-ollama.sh",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "@orama/orama": "^3.0.0",
+    "cheerio": "^1.0.0",
+    "chokidar": "^4.0.0",
+    "commander": "^12.0.0",
+    "glob": "^13.0.0",
+    "mammoth": "^1.8.0",
+    "ollama": "^0.5.0",
+    "pdf-parse": "^1.1.1",
+    "remark": "^15.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.10",
+    "@vitest/coverage-v8": "^2.1.8",
+    "esbuild": "^0.27.2",
+    "pdf-lib": "^1.17.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "documentation",
+    "search",
+    "rag",
+    "hybrid-search",
+    "cli",
+    "claude-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/dseek"
+  }
+}
