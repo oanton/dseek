@@ -1,0 +1,5 @@
+{
+  "name": "dseek",
+  "description": "Local-first documentation search CLI with hybrid retrieval (semantic + BM25)",
+  "version": "1.0.0"
+}

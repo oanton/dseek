@@ -1,9 +1,0 @@
-{
-  "name": "dseek",
-  "version": "1.0.0",
-  "description": "Local documentation search with hybrid retrieval (semantic + BM25)",
-  "skills": ["dseek"],
-  "requires": {
-    "cli": "@dseek/cli"
-  }
-}
