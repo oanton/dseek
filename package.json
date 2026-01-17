@@ -18,7 +18,6 @@
   "scripts": {
     "dev": "tsx bin/dseek.ts",
     "build": "npx esbuild bin/dseek.ts --bundle --platform=node --format=esm --outfile=dist/dseek.js --banner:js='#!/usr/bin/env node' --packages=external --define:__VERSION__='\"1.0.0\"'",
-    "prepare": "npm run build",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -40,12 +39,12 @@
     "pdf-parse": "^1.1.1",
     "remark": "^15.0.0",
     "remark-parse": "^11.0.0",
-    "unified": "^11.0.0",
-    "esbuild": "^0.27.2"
+    "unified": "^11.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.10",
     "@vitest/coverage-v8": "^2.1.8",
+    "esbuild": "^0.27.2",
     "pdf-lib": "^1.17.1",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2",
