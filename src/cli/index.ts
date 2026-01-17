@@ -6,7 +6,6 @@
  * @module cli
  */
 
-import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { addCommand } from './commands/add.js';
 import { auditCommand } from './commands/audit.js';
@@ -18,8 +17,8 @@ import { searchCommand } from './commands/search.js';
 import { statusCommand } from './commands/status.js';
 import { watchCommand } from './commands/watch.js';
 
-const require = createRequire(import.meta.url);
-const { version: VERSION } = require('../../package.json');
+declare const __VERSION__: string;
+const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.0.0';
 
 export function createCLI(): Command {
   const program = new Command();

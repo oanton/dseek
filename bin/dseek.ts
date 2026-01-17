@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * DSEEK CLI entry point
  */
