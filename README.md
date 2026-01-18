@@ -14,15 +14,26 @@ DSEEK indexes your project documentation and provides fast, accurate search usin
 
 ## Installation
 
+### From GitHub Release (recommended)
+
 ```bash
-# Install CLI globally
-npm install -g @dseek/cli
+npm install -g https://github.com/oanton/dseek/releases/download/v1.0.0/dseek-cli-1.0.0.tgz
+```
+
+### From Source
+
+```bash
+git clone https://github.com/oanton/dseek
+cd dseek
+npm install
+npm link
 ```
 
 ### Claude Code Plugin
 
 ```
-/plugin install dseek
+/plugin marketplace add oanton/dseek
+/plugin install dseek@dseek-marketplace
 ```
 
 ## Quick Start
@@ -109,7 +120,7 @@ Configuration is stored in `.dseek/config.json`. See the **[Configuration Refere
 
 ```bash
 # Clone and install
-git clone https://github.com/user/dseek
+git clone https://github.com/oanton/dseek
 cd dseek
 npm install
 
