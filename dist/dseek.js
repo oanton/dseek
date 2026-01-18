@@ -520,12 +520,29 @@ import { count, create, insert, load as load2, remove, save, search } from "@ora
 
 // src/core/embedder.ts
 import { join as join2 } from "node:path";
-import { pipeline } from "@huggingface/transformers";
+import { AutoTokenizer, pipeline } from "@huggingface/transformers";
 var embedderInstance = null;
+var tokenizerInstance = null;
 var isLoading = false;
 var loadError = null;
 function getModelsDir() {
   return join2(getDseekDir(), DIRS.MODELS);
+}
+async function getTokenizer() {
+  if (!tokenizerInstance) {
+    tokenizerInstance = await AutoTokenizer.from_pretrained(MODELS.EMBEDDING, {
+      cache_dir: getModelsDir()
+    });
+  }
+  return tokenizerInstance;
+}
+async function truncateText(text, maxTokens) {
+  const tokenizer = await getTokenizer();
+  const encoded = tokenizer(text, {
+    truncation: true,
+    max_length: maxTokens
+  });
+  return tokenizer.decode(encoded.input_ids.data, { skip_special_tokens: true });
 }
 async function getEmbedder() {
   if (embedderInstance) {
@@ -564,12 +581,10 @@ async function getEmbedder() {
 }
 async function embed(text) {
   const embedder = await getEmbedder();
-  const result = await embedder(text, {
+  const truncatedText = await truncateText(text, EMBEDDING_CONFIG.MAX_TOKENS);
+  const result = await embedder(truncatedText, {
     pooling: "mean",
-    normalize: true,
-    // Truncation options not in TS types but supported at runtime
-    truncation: true,
-    max_length: EMBEDDING_CONFIG.MAX_TOKENS
+    normalize: true
   });
   const embedding = Array.from(result.data);
   if (embedding.length !== EMBEDDING_CONFIG.DIMENSIONS) {
@@ -587,12 +602,10 @@ async function embedBatch(texts) {
     const batch = texts.slice(i, i + LIMITS.EMBEDDING_BATCH_SIZE);
     const results = await Promise.all(
       batch.map(async (text) => {
-        const result = await embedder(text, {
+        const truncatedText = await truncateText(text, EMBEDDING_CONFIG.MAX_TOKENS);
+        const result = await embedder(truncatedText, {
           pooling: "mean",
-          normalize: true,
-          // Truncation options not in TS types but supported at runtime
-          truncation: true,
-          max_length: EMBEDDING_CONFIG.MAX_TOKENS
+          normalize: true
         });
         return Array.from(result.data);
       })
@@ -1452,7 +1465,7 @@ import { mkdir as mkdir4 } from "node:fs/promises";
 import { Command as Command3 } from "commander";
 
 // src/core/reranker.ts
-import { AutoModelForSequenceClassification, AutoTokenizer } from "@huggingface/transformers";
+import { AutoModelForSequenceClassification, AutoTokenizer as AutoTokenizer2 } from "@huggingface/transformers";
 var rerankerInstance = null;
 var isLoading2 = false;
 var loadError2 = null;
@@ -1481,7 +1494,7 @@ async function getReranker() {
       AutoModelForSequenceClassification.from_pretrained(MODELS.RERANKER, {
         cache_dir: getModelsDir()
       }),
-      AutoTokenizer.from_pretrained(MODELS.RERANKER, {
+      AutoTokenizer2.from_pretrained(MODELS.RERANKER, {
         cache_dir: getModelsDir()
       })
     ]);

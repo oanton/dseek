@@ -8,12 +8,13 @@
  */
 
 import { join } from 'node:path';
-import { type FeatureExtractionPipeline, pipeline } from '@huggingface/transformers';
+import { AutoTokenizer, type FeatureExtractionPipeline, type PreTrainedTokenizer, pipeline } from '@huggingface/transformers';
 import { getDseekDir } from './config.js';
 import { DIRS, EMBEDDING_CONFIG, LIMITS, MODELS, TIMING } from './constants.js';
 
-// Singleton instance
+// Singleton instances
 let embedderInstance: FeatureExtractionPipeline | null = null;
+let tokenizerInstance: PreTrainedTokenizer | null = null;
 let isLoading = false;
 let loadError: Error | null = null;
 
@@ -22,6 +23,43 @@ let loadError: Error | null = null;
  */
 export function getModelsDir(): string {
   return join(getDseekDir(), DIRS.MODELS);
+}
+
+/**
+ * Get or initialize the tokenizer for text truncation.
+ *
+ * Uses same model as embedder to ensure consistent tokenization.
+ *
+ * @returns Initialized tokenizer
+ */
+async function getTokenizer(): Promise<PreTrainedTokenizer> {
+  if (!tokenizerInstance) {
+    tokenizerInstance = await AutoTokenizer.from_pretrained(MODELS.EMBEDDING, {
+      cache_dir: getModelsDir(),
+    });
+  }
+  return tokenizerInstance;
+}
+
+/**
+ * Truncate text to fit within token limit.
+ *
+ * Uses the model's tokenizer to properly truncate text at token boundaries.
+ * This ensures text doesn't exceed the embedding model's context window.
+ *
+ * @param text - Input text to truncate
+ * @param maxTokens - Maximum number of tokens
+ * @returns Truncated text
+ */
+async function truncateText(text: string, maxTokens: number): Promise<string> {
+  const tokenizer = await getTokenizer();
+  const encoded = tokenizer(text, {
+    truncation: true,
+    max_length: maxTokens,
+  });
+
+  // Decode back to text without special tokens
+  return tokenizer.decode(encoded.input_ids.data, { skip_special_tokens: true });
 }
 
 /**
@@ -110,13 +148,13 @@ export function isEmbedderReady(): boolean {
 export async function embed(text: string): Promise<number[]> {
   const embedder = await getEmbedder();
 
-  const result = await embedder(text, {
+  // Truncate text to fit model's token limit
+  const truncatedText = await truncateText(text, EMBEDDING_CONFIG.MAX_TOKENS);
+
+  const result = await embedder(truncatedText, {
     pooling: 'mean',
     normalize: true,
-    // Truncation options not in TS types but supported at runtime
-    truncation: true,
-    max_length: EMBEDDING_CONFIG.MAX_TOKENS,
-  } as Parameters<typeof embedder>[1]);
+  });
 
   // Convert to array
   const embedding = Array.from(result.data as Float32Array);
@@ -156,13 +194,12 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
 
     const results = await Promise.all(
       batch.map(async (text) => {
-        const result = await embedder(text, {
+        // Truncate text to fit model's token limit
+        const truncatedText = await truncateText(text, EMBEDDING_CONFIG.MAX_TOKENS);
+        const result = await embedder(truncatedText, {
           pooling: 'mean',
           normalize: true,
-          // Truncation options not in TS types but supported at runtime
-          truncation: true,
-          max_length: EMBEDDING_CONFIG.MAX_TOKENS,
-        } as Parameters<typeof embedder>[1]);
+        });
         return Array.from(result.data as Float32Array);
       }),
     );
@@ -227,10 +264,11 @@ export function getModelName(): string {
 }
 
 /**
- * Reset the embedder (for testing)
+ * Reset the embedder and tokenizer (for testing)
  */
 export function resetEmbedder(): void {
   embedderInstance = null;
+  tokenizerInstance = null;
   isLoading = false;
   loadError = null;
 }
