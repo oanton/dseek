@@ -52,14 +52,25 @@ async function getTokenizer(): Promise<PreTrainedTokenizer> {
  * @returns Truncated text
  */
 async function truncateText(text: string, maxTokens: number): Promise<string> {
+  // Handle empty input
+  if (!text || !text.trim()) {
+    return text;
+  }
+
   const tokenizer = await getTokenizer();
   const encoded = tokenizer(text, {
     truncation: true,
     max_length: maxTokens,
   });
 
+  // Handle empty token IDs (return original text as fallback)
+  const tokenIds = encoded.input_ids.data;
+  if (!tokenIds || tokenIds.length === 0) {
+    return text;
+  }
+
   // Decode back to text without special tokens
-  return tokenizer.decode(encoded.input_ids.data, { skip_special_tokens: true });
+  return tokenizer.decode(tokenIds, { skip_special_tokens: true });
 }
 
 /**

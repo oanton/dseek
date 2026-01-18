@@ -537,12 +537,19 @@ async function getTokenizer() {
   return tokenizerInstance;
 }
 async function truncateText(text, maxTokens) {
+  if (!text || !text.trim()) {
+    return text;
+  }
   const tokenizer = await getTokenizer();
   const encoded = tokenizer(text, {
     truncation: true,
     max_length: maxTokens
   });
-  return tokenizer.decode(encoded.input_ids.data, { skip_special_tokens: true });
+  const tokenIds = encoded.input_ids.data;
+  if (!tokenIds || tokenIds.length === 0) {
+    return text;
+  }
+  return tokenizer.decode(tokenIds, { skip_special_tokens: true });
 }
 async function getEmbedder() {
   if (embedderInstance) {
