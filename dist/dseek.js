@@ -545,8 +545,12 @@ async function truncateText(text, maxTokens) {
     truncation: true,
     max_length: maxTokens
   });
-  const tokenIds = encoded.input_ids.data;
-  if (!tokenIds || tokenIds.length === 0) {
+  const tokenIdsData = encoded.input_ids.data;
+  if (!tokenIdsData || tokenIdsData.length === 0) {
+    return text;
+  }
+  const tokenIds = Array.from(tokenIdsData, (x) => Number(x));
+  if (tokenIds.length === 0) {
     return text;
   }
   return tokenizer.decode(tokenIds, { skip_special_tokens: true });

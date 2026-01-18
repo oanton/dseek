@@ -64,8 +64,15 @@ async function truncateText(text: string, maxTokens: number): Promise<string> {
   });
 
   // Handle empty token IDs (return original text as fallback)
-  const tokenIds = encoded.input_ids.data;
-  if (!tokenIds || tokenIds.length === 0) {
+  const tokenIdsData = encoded.input_ids.data;
+  if (!tokenIdsData || tokenIdsData.length === 0) {
+    return text;
+  }
+
+  // Convert typed array (BigInt64Array) to regular array of integers
+  // The decode function expects an array of integers, not BigInts
+  const tokenIds = Array.from(tokenIdsData, (x) => Number(x));
+  if (tokenIds.length === 0) {
     return text;
   }
 
