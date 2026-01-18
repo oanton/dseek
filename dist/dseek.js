@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import{createRequire}from"node:module";const require=createRequire(import.meta.url);
 var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
 }) : x)(function(x) {
@@ -58,7 +59,9 @@ var EMBEDDING_CONFIG = {
   /** Vector dimensions for gte-multilingual-base */
   DIMENSIONS: 768,
   /** Data type for model inference */
-  DTYPE: "fp32"
+  DTYPE: "fp32",
+  /** Maximum tokens for embedding input (model limit is 512) */
+  MAX_TOKENS: 512
 };
 var RETRIEVAL_WEIGHTS = {
   /** Semantic (vector) search weight */
@@ -563,7 +566,10 @@ async function embed(text) {
   const embedder = await getEmbedder();
   const result = await embedder(text, {
     pooling: "mean",
-    normalize: true
+    normalize: true,
+    // Truncation options not in TS types but supported at runtime
+    truncation: true,
+    max_length: EMBEDDING_CONFIG.MAX_TOKENS
   });
   const embedding = Array.from(result.data);
   if (embedding.length !== EMBEDDING_CONFIG.DIMENSIONS) {
@@ -583,7 +589,10 @@ async function embedBatch(texts) {
       batch.map(async (text) => {
         const result = await embedder(text, {
           pooling: "mean",
-          normalize: true
+          normalize: true,
+          // Truncation options not in TS types but supported at runtime
+          truncation: true,
+          max_length: EMBEDDING_CONFIG.MAX_TOKENS
         });
         return Array.from(result.data);
       })

@@ -113,7 +113,10 @@ export async function embed(text: string): Promise<number[]> {
   const result = await embedder(text, {
     pooling: 'mean',
     normalize: true,
-  });
+    // Truncation options not in TS types but supported at runtime
+    truncation: true,
+    max_length: EMBEDDING_CONFIG.MAX_TOKENS,
+  } as Parameters<typeof embedder>[1]);
 
   // Convert to array
   const embedding = Array.from(result.data as Float32Array);
@@ -156,7 +159,10 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
         const result = await embedder(text, {
           pooling: 'mean',
           normalize: true,
-        });
+          // Truncation options not in TS types but supported at runtime
+          truncation: true,
+          max_length: EMBEDDING_CONFIG.MAX_TOKENS,
+        } as Parameters<typeof embedder>[1]);
         return Array.from(result.data as Float32Array);
       }),
     );

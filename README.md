@@ -36,6 +36,8 @@ npm link
 /plugin install dseek@dseek-marketplace
 ```
 
+> **Note**: Restart Claude Code after installing the plugin for changes to take effect.
+
 ## Quick Start
 
 ```bash

@@ -9,15 +9,14 @@
   },
   "files": [
     "dist",
-    "src",
-    "bin"
+    "src"
   ],
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
     "dev": "tsx bin/dseek.ts",
-    "build": "npx esbuild bin/dseek.ts --bundle --platform=node --format=esm --outfile=dist/dseek.js --banner:js='#!/usr/bin/env node' --packages=external --define:__VERSION__='\"1.0.0\"'",
+    "build": "npx esbuild bin/dseek.ts --bundle --platform=node --format=esm --outfile=dist/dseek.js --banner:js='#!/usr/bin/env node\nimport{createRequire}from\"node:module\";const require=createRequire(import.meta.url);' --packages=external --define:__VERSION__='\"1.0.0\"'",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",

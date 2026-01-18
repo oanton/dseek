@@ -59,6 +59,8 @@ export const EMBEDDING_CONFIG = {
   DIMENSIONS: 768,
   /** Data type for model inference */
   DTYPE: 'fp32' as const,
+  /** Maximum tokens for embedding input (model limit is 512) */
+  MAX_TOKENS: 512,
 } as const;
 
 // ============================================================================
