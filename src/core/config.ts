@@ -120,10 +120,14 @@ export function isInitialized(projectRoot?: string): boolean {
  * @returns Complete configuration object
  */
 export async function loadConfig(projectRoot?: string): Promise<DseekConfig> {
-  const configPath = getConfigPath(projectRoot);
+  const root = projectRoot ?? findProjectRoot();
+  const configPath = getConfigPath(root);
 
   if (!existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG };
+    return {
+      ...DEFAULT_CONFIG,
+      project_id: basename(root),
+    };
   }
 
   const content = await readFile(configPath, 'utf-8');

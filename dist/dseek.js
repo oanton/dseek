@@ -234,9 +234,13 @@ function isInitialized(projectRoot) {
   return existsSync(getConfigPath(projectRoot));
 }
 async function loadConfig(projectRoot) {
-  const configPath = getConfigPath(projectRoot);
+  const root = projectRoot ?? findProjectRoot();
+  const configPath = getConfigPath(root);
   if (!existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG };
+    return {
+      ...DEFAULT_CONFIG,
+      project_id: basename(root)
+    };
   }
   const content = await readFile(configPath, "utf-8");
   const config = JSON.parse(content);
