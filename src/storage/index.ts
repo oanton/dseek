@@ -11,7 +11,8 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Orama, Results } from '@orama/orama';
-import { count, create, insert, load, remove, save, search } from '@orama/orama';
+import { count, create, insert, insertMultiple, remove, search } from '@orama/orama';
+import { persist, restore } from '@orama/plugin-data-persistence';
 import { getDseekDir } from '../core/config.js';
 import { DIRS, FILES, LIMITS, RETRIEVAL_WEIGHTS, SEARCH } from '../core/constants.js';
 import { getEmbeddingDim } from '../core/embedder.js';
@@ -43,6 +44,27 @@ type ChunkDocument = {
 };
 
 let db: Orama<typeof SCHEMA> | null = null;
+let dbInitPromise: Promise<Orama<typeof SCHEMA>> | null = null;
+
+// Global mutex for serializing ALL database write operations
+// Protects: insertChunk, insertChunks, removeDocument
+let dbWriteLock: Promise<void> = Promise.resolve();
+
+/**
+ * Acquire exclusive write lock for database modification.
+ * All write operations MUST use this to prevent Orama state corruption.
+ *
+ * @returns Release function to call when operation completes
+ */
+async function acquireWriteLock(): Promise<() => void> {
+  const previousLock = dbWriteLock;
+  let releaseLock: () => void;
+  dbWriteLock = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+  await previousLock;
+  return releaseLock!;
+}
 
 /**
  * Get index directory path
@@ -62,7 +84,8 @@ export function getIndexPath(): string {
  * Initialize or load the search index.
  *
  * Creates new index or loads existing from disk.
- * Uses singleton pattern - subsequent calls return cached instance.
+ * Uses singleton pattern with promise deduplication to prevent race conditions
+ * when multiple callers request initialization simultaneously.
  *
  * @returns Initialized Orama database instance
  *
@@ -72,45 +95,56 @@ export function getIndexPath(): string {
  * ```
  */
 export async function initIndex(): Promise<Orama<typeof SCHEMA>> {
+  // Return existing instance
   if (db) return db;
 
-  const indexPath = getIndexPath();
-  const indexDir = getIndexDir();
+  // If initialization is in progress, wait for it (prevents race condition)
+  if (dbInitPromise) return dbInitPromise;
 
-  // Ensure directory exists
-  if (!existsSync(indexDir)) {
-    await mkdir(indexDir, { recursive: true });
-  }
+  // Start initialization and store the promise
+  dbInitPromise = (async () => {
+    const indexPath = getIndexPath();
+    const indexDir = getIndexDir();
 
-  // Create new index first
-  db = await create({ schema: SCHEMA });
-
-  // Try to load existing data into it
-  if (existsSync(indexPath)) {
-    try {
-      const data = await readFile(indexPath, 'utf-8');
-      load(db, JSON.parse(data));
-      return db;
-    } catch (error) {
-      console.warn('Failed to load index, creating new one:', error);
-      // Reset db since load may have partially modified it
-      db = await create({ schema: SCHEMA });
+    // Ensure directory exists
+    if (!existsSync(indexDir)) {
+      await mkdir(indexDir, { recursive: true });
     }
-  }
-  return db;
+
+    // Try to restore existing index
+    if (existsSync(indexPath)) {
+      try {
+        const data = await readFile(indexPath, 'utf-8');
+        db = (await restore('json', data)) as Orama<typeof SCHEMA>;
+        return db;
+      } catch (error) {
+        console.warn('Failed to load index, creating new one:', error);
+      }
+    }
+
+    // Create new index if no existing data
+    db = await create({ schema: SCHEMA });
+    return db;
+  })();
+
+  return dbInitPromise;
 }
 
 /**
  * Save the index to disk.
  *
+ * Waits for all pending write operations to complete before persisting.
  * Persists current index state to `.dseek/index/orama.json`.
  */
 export async function saveIndex(): Promise<void> {
   if (!db) return;
 
+  // Wait for any pending write operations to complete
+  await dbWriteLock;
+
   const indexPath = getIndexPath();
-  const data = await save(db);
-  await writeFile(indexPath, JSON.stringify(data));
+  const data = await persist(db, 'json');
+  await writeFile(indexPath, data as string);
 }
 
 /**
@@ -124,62 +158,101 @@ export async function getDb(): Promise<Orama<typeof SCHEMA>> {
 }
 
 /**
- * Insert a single chunk into the index.
+ * Insert a single chunk into the index with mutex protection.
  *
  * @param chunk - Chunk with text, embedding, and metadata
  */
 export async function insertChunk(chunk: Chunk): Promise<void> {
-  const database = await getDb();
+  const release = await acquireWriteLock();
+  try {
+    const database = await getDb();
 
-  const doc: ChunkDocument = {
-    doc_id: chunk.doc_id,
-    chunk_id: chunk.chunk_id,
-    text: chunk.text,
-    snippet: chunk.snippet,
-    line_start: chunk.line_start,
-    line_end: chunk.line_end,
-    page_start: chunk.page_start ?? 0,
-    page_end: chunk.page_end ?? 0,
-    embedding: chunk.embedding ?? [],
-  };
+    const doc: ChunkDocument = {
+      doc_id: chunk.doc_id,
+      chunk_id: chunk.chunk_id,
+      text: chunk.text,
+      snippet: chunk.snippet,
+      line_start: chunk.line_start,
+      line_end: chunk.line_end,
+      page_start: chunk.page_start ?? 0,
+      page_end: chunk.page_end ?? 0,
+      embedding: chunk.embedding ?? [],
+    };
 
-  await insert(database, doc);
-}
-
-/**
- * Insert multiple chunks into the index.
- *
- * @param chunks - Array of chunks to insert
- */
-export async function insertChunks(chunks: Chunk[]): Promise<void> {
-  for (const chunk of chunks) {
-    await insertChunk(chunk);
+    await insert(database, doc);
+  } finally {
+    release();
   }
 }
 
 /**
- * Remove all chunks for a document.
+ * Insert multiple chunks into the index with mutex protection.
+ *
+ * Uses a lock to serialize concurrent insert calls, preventing
+ * Orama state corruption from parallel modifications.
+ *
+ * @param chunks - Array of chunks to insert
+ */
+export async function insertChunks(chunks: Chunk[]): Promise<void> {
+  if (chunks.length === 0) return;
+
+  const release = await acquireWriteLock();
+  try {
+    const database = await getDb();
+
+    const docs: ChunkDocument[] = chunks.map((chunk) => ({
+      doc_id: chunk.doc_id,
+      chunk_id: chunk.chunk_id,
+      text: chunk.text,
+      snippet: chunk.snippet,
+      line_start: chunk.line_start,
+      line_end: chunk.line_end,
+      page_start: chunk.page_start ?? 0,
+      page_end: chunk.page_end ?? 0,
+      embedding: chunk.embedding ?? [],
+    }));
+
+    await insertMultiple(database, docs, LIMITS.EMBEDDING_BATCH_SIZE);
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Remove all chunks for a document with mutex protection.
  *
  * @param docId - Document identifier (relative path)
  * @returns Number of chunks removed
  */
 export async function removeDocument(docId: string): Promise<number> {
-  const database = await getDb();
+  const release = await acquireWriteLock();
+  try {
+    const database = await getDb();
+    let totalRemoved = 0;
 
-  // Find all chunks for this document
-  const results = await search(database, {
-    term: docId,
-    properties: ['doc_id'],
-    limit: LIMITS.MAX_CHUNKS_PER_SEARCH,
-  });
+    // Loop until all chunks are removed (handles >1000 chunks)
+    // Note: Orama's where clause doesn't do exact match, so we filter manually
+    while (true) {
+      const results = (await search(database, {
+        term: '',
+        limit: LIMITS.MAX_CHUNKS_PER_SEARCH,
+      })) as Results<ChunkDocument>;
 
-  let removed = 0;
-  for (const hit of results.hits) {
-    await remove(database, hit.id);
-    removed++;
+      // Filter for exact doc_id match (Orama where clause is broken for strings)
+      const matchingHits = results.hits.filter((hit) => hit.document.doc_id === docId);
+
+      if (matchingHits.length === 0) break;
+
+      for (const hit of matchingHits) {
+        await remove(database, hit.id);
+        totalRemoved++;
+      }
+    }
+
+    return totalRemoved;
+  } finally {
+    release();
   }
-
-  return removed;
 }
 
 /**
@@ -303,5 +376,11 @@ export async function documentExists(docId: string): Promise<boolean> {
  * Reset the index (for testing)
  */
 export async function resetIndex(): Promise<void> {
-  db = await create({ schema: SCHEMA });
+  const release = await acquireWriteLock();
+  try {
+    db = await create({ schema: SCHEMA });
+    dbInitPromise = null; // Clear init promise so fresh initialization can occur
+  } finally {
+    release();
+  }
 }

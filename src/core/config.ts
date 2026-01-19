@@ -9,7 +9,7 @@
 
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { DseekConfig, Source } from '../types/index.js';
 import { DIRS, FILES, LIMITS, RETRIEVAL_WEIGHTS } from './constants.js';
 
@@ -179,7 +179,11 @@ export async function initializeProject(projectRoot?: string): Promise<void> {
   // Create config if not exists
   const configPath = getConfigPath(root);
   if (!existsSync(configPath)) {
-    await saveConfig(DEFAULT_CONFIG, root);
+    const config = {
+      ...DEFAULT_CONFIG,
+      project_id: basename(root),
+    };
+    await saveConfig(config, root);
   }
 
   // Create ignore file if not exists

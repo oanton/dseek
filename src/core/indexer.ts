@@ -15,6 +15,7 @@ import { glob } from 'glob';
 import { getFormat, isSupported, parseDocument } from '../parsers/index.js';
 import { insertChunks, removeDocument as removeFromIndex, saveIndex } from '../storage/index.js';
 import {
+  loadMetadata,
   needsUpdate,
   recordEvent,
   removeDocument as removeFromMetadata,
@@ -279,18 +280,24 @@ export async function indexSource(source: Source, projectRoot?: string): Promise
 }
 
 /**
- * Remove a document from the index.
+ * Remove a document or directory from the index.
  *
  * Deletes all chunks and metadata associated with the document.
+ * If a directory path is provided, removes all documents with matching prefix.
  *
- * @param docIdOrPath - Document ID or absolute file path
+ * @param docIdOrPath - Document ID, directory path, or absolute file path
  * @param projectRoot - Optional project root directory
- * @returns True if document was found and removed
+ * @returns True if any documents were found and removed
  *
  * @example
  * ```ts
+ * // Remove single document
  * const removed = await deleteDocument("docs/old-file.md");
  * if (removed) console.log("Document removed from index");
+ *
+ * // Remove all documents in directory
+ * const removed = await deleteDocument("./docs");
+ * if (removed) console.log("Directory removed from index");
  * ```
  */
 export async function deleteDocument(docIdOrPath: string, projectRoot?: string): Promise<boolean> {
@@ -299,15 +306,37 @@ export async function deleteDocument(docIdOrPath: string, projectRoot?: string):
   // Normalize to doc ID
   const docId = docIdOrPath.startsWith('/') ? relative(root, docIdOrPath) : docIdOrPath;
 
-  // Remove from storage
-  const chunksRemoved = await removeFromIndex(docId);
-  const metaRemoved = await removeFromMetadata(docId);
+  // Normalize: remove leading ./ if present
+  const normalizedId = docId.replace(/^\.\//, '');
 
-  if (chunksRemoved > 0 || metaRemoved) {
+  // Get all document IDs from metadata
+  const metadata = await loadMetadata();
+  const allDocIds = Object.keys(metadata.documents);
+
+  // Find matching documents (exact match OR prefix match for directories)
+  const matchingDocs = allDocIds.filter(
+    (id) => id === normalizedId || id.startsWith(normalizedId + '/'),
+  );
+
+  if (matchingDocs.length === 0) {
+    return false;
+  }
+
+  let totalChunksRemoved = 0;
+  let totalMetaRemoved = 0;
+
+  for (const docToDelete of matchingDocs) {
+    const chunksRemoved = await removeFromIndex(docToDelete);
+    const metaRemoved = await removeFromMetadata(docToDelete);
+    totalChunksRemoved += chunksRemoved;
+    if (metaRemoved) totalMetaRemoved++;
+  }
+
+  if (totalChunksRemoved > 0 || totalMetaRemoved > 0) {
     // Record event
     await recordEvent({
       type: 'delete',
-      path: docId,
+      path: normalizedId,
       at: new Date().toISOString(),
     });
 

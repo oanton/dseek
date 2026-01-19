@@ -12,13 +12,13 @@ import { Command as Command10 } from "commander";
 
 // src/cli/commands/add.ts
 import { existsSync as existsSync5 } from "node:fs";
-import { basename, isAbsolute, relative as relative2, resolve as resolve2 } from "node:path";
+import { basename as basename2, isAbsolute, relative as relative2, resolve as resolve2 } from "node:path";
 import { Command } from "commander";
 
 // src/core/config.ts
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 // src/core/constants.ts
 var LIMITS = {
@@ -267,7 +267,11 @@ async function initializeProject(projectRoot) {
   await mkdir(join(dseekDir, DIRS.CACHE), { recursive: true });
   const configPath = getConfigPath(root);
   if (!existsSync(configPath)) {
-    await saveConfig(DEFAULT_CONFIG, root);
+    const config = {
+      ...DEFAULT_CONFIG,
+      project_id: basename(root)
+    };
+    await saveConfig(config, root);
   }
   const ignorePath = join(root, FILES.IGNORE);
   if (!existsSync(ignorePath)) {
@@ -516,7 +520,8 @@ async function parseDocument(content, filePath) {
 import { existsSync as existsSync2 } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
 import { join as join3 } from "node:path";
-import { count, create, insert, load as load2, remove, save, search } from "@orama/orama";
+import { count, create, insert, insertMultiple, remove, search } from "@orama/orama";
+import { persist, restore } from "@orama/plugin-data-persistence";
 
 // src/core/embedder.ts
 import { join as join2 } from "node:path";
@@ -645,6 +650,17 @@ var SCHEMA = {
   embedding: `vector[${getEmbeddingDim()}]`
 };
 var db = null;
+var dbInitPromise = null;
+var dbWriteLock = Promise.resolve();
+async function acquireWriteLock() {
+  const previousLock = dbWriteLock;
+  let releaseLock;
+  dbWriteLock = new Promise((resolve3) => {
+    releaseLock = resolve3;
+  });
+  await previousLock;
+  return releaseLock;
+}
 function getIndexDir() {
   return join3(getDseekDir(), DIRS.INDEX);
 }
@@ -653,29 +669,33 @@ function getIndexPath() {
 }
 async function initIndex() {
   if (db) return db;
-  const indexPath = getIndexPath();
-  const indexDir = getIndexDir();
-  if (!existsSync2(indexDir)) {
-    await mkdir2(indexDir, { recursive: true });
-  }
-  db = await create({ schema: SCHEMA });
-  if (existsSync2(indexPath)) {
-    try {
-      const data = await readFile2(indexPath, "utf-8");
-      load2(db, JSON.parse(data));
-      return db;
-    } catch (error) {
-      console.warn("Failed to load index, creating new one:", error);
-      db = await create({ schema: SCHEMA });
+  if (dbInitPromise) return dbInitPromise;
+  dbInitPromise = (async () => {
+    const indexPath = getIndexPath();
+    const indexDir = getIndexDir();
+    if (!existsSync2(indexDir)) {
+      await mkdir2(indexDir, { recursive: true });
     }
-  }
-  return db;
+    if (existsSync2(indexPath)) {
+      try {
+        const data = await readFile2(indexPath, "utf-8");
+        db = await restore("json", data);
+        return db;
+      } catch (error) {
+        console.warn("Failed to load index, creating new one:", error);
+      }
+    }
+    db = await create({ schema: SCHEMA });
+    return db;
+  })();
+  return dbInitPromise;
 }
 async function saveIndex() {
   if (!db) return;
+  await dbWriteLock;
   const indexPath = getIndexPath();
-  const data = await save(db);
-  await writeFile2(indexPath, JSON.stringify(data));
+  const data = await persist(db, "json");
+  await writeFile2(indexPath, data);
 }
 async function getDb() {
   if (!db) {
@@ -683,39 +703,48 @@ async function getDb() {
   }
   return db;
 }
-async function insertChunk(chunk) {
-  const database = await getDb();
-  const doc = {
-    doc_id: chunk.doc_id,
-    chunk_id: chunk.chunk_id,
-    text: chunk.text,
-    snippet: chunk.snippet,
-    line_start: chunk.line_start,
-    line_end: chunk.line_end,
-    page_start: chunk.page_start ?? 0,
-    page_end: chunk.page_end ?? 0,
-    embedding: chunk.embedding ?? []
-  };
-  await insert(database, doc);
-}
 async function insertChunks(chunks) {
-  for (const chunk of chunks) {
-    await insertChunk(chunk);
+  if (chunks.length === 0) return;
+  const release = await acquireWriteLock();
+  try {
+    const database = await getDb();
+    const docs = chunks.map((chunk) => ({
+      doc_id: chunk.doc_id,
+      chunk_id: chunk.chunk_id,
+      text: chunk.text,
+      snippet: chunk.snippet,
+      line_start: chunk.line_start,
+      line_end: chunk.line_end,
+      page_start: chunk.page_start ?? 0,
+      page_end: chunk.page_end ?? 0,
+      embedding: chunk.embedding ?? []
+    }));
+    await insertMultiple(database, docs, LIMITS.EMBEDDING_BATCH_SIZE);
+  } finally {
+    release();
   }
 }
 async function removeDocument(docId) {
-  const database = await getDb();
-  const results = await search(database, {
-    term: docId,
-    properties: ["doc_id"],
-    limit: LIMITS.MAX_CHUNKS_PER_SEARCH
-  });
-  let removed = 0;
-  for (const hit of results.hits) {
-    await remove(database, hit.id);
-    removed++;
+  const release = await acquireWriteLock();
+  try {
+    const database = await getDb();
+    let totalRemoved = 0;
+    while (true) {
+      const results = await search(database, {
+        term: "",
+        limit: LIMITS.MAX_CHUNKS_PER_SEARCH
+      });
+      const matchingHits = results.hits.filter((hit) => hit.document.doc_id === docId);
+      if (matchingHits.length === 0) break;
+      for (const hit of matchingHits) {
+        await remove(database, hit.id);
+        totalRemoved++;
+      }
+    }
+    return totalRemoved;
+  } finally {
+    release();
   }
-  return removed;
 }
 async function searchIndex(query, embedding, options = {}) {
   const database = await getDb();
@@ -1201,12 +1230,27 @@ async function indexSource(source, projectRoot) {
 async function deleteDocument(docIdOrPath, projectRoot) {
   const root = projectRoot ?? findProjectRoot();
   const docId = docIdOrPath.startsWith("/") ? relative(root, docIdOrPath) : docIdOrPath;
-  const chunksRemoved = await removeDocument(docId);
-  const metaRemoved = await removeDocument2(docId);
-  if (chunksRemoved > 0 || metaRemoved) {
+  const normalizedId = docId.replace(/^\.\//, "");
+  const metadata = await loadMetadata();
+  const allDocIds = Object.keys(metadata.documents);
+  const matchingDocs = allDocIds.filter(
+    (id) => id === normalizedId || id.startsWith(normalizedId + "/")
+  );
+  if (matchingDocs.length === 0) {
+    return false;
+  }
+  let totalChunksRemoved = 0;
+  let totalMetaRemoved = 0;
+  for (const docToDelete of matchingDocs) {
+    const chunksRemoved = await removeDocument(docToDelete);
+    const metaRemoved = await removeDocument2(docToDelete);
+    totalChunksRemoved += chunksRemoved;
+    if (metaRemoved) totalMetaRemoved++;
+  }
+  if (totalChunksRemoved > 0 || totalMetaRemoved > 0) {
     await recordEvent({
       type: "delete",
-      path: docId,
+      path: normalizedId,
       at: (/* @__PURE__ */ new Date()).toISOString()
     });
     await saveIndex();
@@ -1237,7 +1281,7 @@ var addCommand = new Command("add").description("Add a file or folder to the ind
     const isWithinProject = !relativePath.startsWith("..") && !isAbsolute(relativePath);
     const sourcePath = isWithinProject ? relativePath : absolutePath;
     const source = {
-      name: options.name ?? basename(absolutePath),
+      name: options.name ?? basename2(absolutePath),
       path: sourcePath,
       include: options.include ?? ["**/*.md", "**/*.txt", "**/*.html", "**/*.pdf", "**/*.docx"],
       exclude: options.exclude ?? [],
