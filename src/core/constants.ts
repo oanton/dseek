@@ -189,12 +189,26 @@ export const FILES = {
   CONFIG: '.dseek/config.json',
   /** Ignore patterns file */
   IGNORE: '.dseek/ignore',
-  /** Orama search index */
-  INDEX: 'orama.json',
-  /** Document metadata */
-  METADATA: 'metadata.json',
+  /** SQLite database file */
+  INDEX: 'dseek.db',
+  /** Legacy Orama index (for migration) */
+  LEGACY_INDEX: 'orama.json',
+  /** Legacy metadata file (for migration) */
+  LEGACY_METADATA: 'metadata.json',
   /** Watcher lock file */
   WATCH_LOCK: 'watch.lock',
   /** Watcher PID file */
   WATCH_PID: 'watch.pid',
+} as const;
+
+/** SQLite configuration */
+export const SQLITE = {
+  /** RRF (Reciprocal Rank Fusion) constant k */
+  RRF_K: 60,
+  /** Busy timeout in milliseconds */
+  BUSY_TIMEOUT_MS: 5000,
+  /** Cache size in KB (negative value = KB) */
+  CACHE_SIZE_KB: 16384,
+  /** Schema version for migrations */
+  SCHEMA_VERSION: 2,
 } as const;

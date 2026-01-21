@@ -7,7 +7,7 @@
  * @module watcher
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { isSupported } from '../parsers/index.js';
@@ -91,7 +91,6 @@ function cleanupLockFiles(): void {
  */
 function createLockFiles(): void {
   const runDir = getRunDir();
-  const { mkdirSync } = require('node:fs');
 
   if (!existsSync(runDir)) {
     mkdirSync(runDir, { recursive: true });

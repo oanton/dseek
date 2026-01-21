@@ -1,262 +1,186 @@
 /**
- * Orama storage and persistence
+ * SQLite storage and persistence
  *
- * Manages the search index using Orama for hybrid BM25 + vector search.
- * Handles index creation, persistence, and CRUD operations.
+ * Manages the search index using SQLite + FTS5 + sqlite-vec for hybrid BM25 + vector search.
+ * Uses RRF (Reciprocal Rank Fusion) to combine keyword and semantic search results.
  *
  * @module storage
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { Orama, Results } from '@orama/orama';
-import { count, create, insert, insertMultiple, remove, search } from '@orama/orama';
-import { persist, restore } from '@orama/plugin-data-persistence';
-import { getDseekDir } from '../core/config.js';
-import { DIRS, FILES, LIMITS, RETRIEVAL_WEIGHTS, SEARCH } from '../core/constants.js';
-import { getEmbeddingDim } from '../core/embedder.js';
+import { mkdir } from 'node:fs/promises';
+import type Database from 'better-sqlite3';
+import { LIMITS, RETRIEVAL_WEIGHTS, SEARCH, SQLITE } from '../core/constants.js';
 import type { Chunk, SearchResult } from '../types/index.js';
-
-// Orama schema for chunks
-const SCHEMA = {
-  doc_id: 'string',
-  chunk_id: 'string',
-  text: 'string',
-  snippet: 'string',
-  line_start: 'number',
-  line_end: 'number',
-  page_start: 'number',
-  page_end: 'number',
-  embedding: `vector[${getEmbeddingDim()}]`,
-} as const;
-
-type ChunkDocument = {
-  doc_id: string;
-  chunk_id: string;
-  text: string;
-  snippet: string;
-  line_start: number;
-  line_end: number;
-  page_start: number;
-  page_end: number;
-  embedding: number[];
-};
-
-let db: Orama<typeof SCHEMA> | null = null;
-let dbInitPromise: Promise<Orama<typeof SCHEMA>> | null = null;
-
-// Global mutex for serializing ALL database write operations
-// Protects: insertChunk, insertChunks, removeDocument
-let dbWriteLock: Promise<void> = Promise.resolve();
-
-/**
- * Acquire exclusive write lock for database modification.
- * All write operations MUST use this to prevent Orama state corruption.
- *
- * @returns Release function to call when operation completes
- */
-async function acquireWriteLock(): Promise<() => void> {
-  const previousLock = dbWriteLock;
-  let releaseLock: () => void;
-  dbWriteLock = new Promise((resolve) => {
-    releaseLock = resolve;
-  });
-  await previousLock;
-  return releaseLock!;
-}
+import { closeDb, getDb, getDbPath, getIndexDir, resetDb } from './sqlite.js';
 
 /**
  * Get index directory path
  */
-export function getIndexDir(): string {
-  return join(getDseekDir(), DIRS.INDEX);
-}
+export { getIndexDir };
 
 /**
- * Get index file path
+ * Get index file path (database path)
  */
 export function getIndexPath(): string {
-  return join(getIndexDir(), FILES.INDEX);
+  return getDbPath();
 }
 
 /**
- * Initialize or load the search index.
+ * Initialize the search index.
  *
- * Creates new index or loads existing from disk.
- * Uses singleton pattern with promise deduplication to prevent race conditions
- * when multiple callers request initialization simultaneously.
+ * Creates database connection and ensures schema is ready.
+ * With SQLite, this is lightweight since schema init happens on first getDb() call.
  *
- * @returns Initialized Orama database instance
+ * @returns Database instance (for compatibility, returns a wrapper)
  *
  * @example
  * ```ts
- * const db = await initIndex();
+ * await initIndex();
  * ```
  */
-export async function initIndex(): Promise<Orama<typeof SCHEMA>> {
-  // Return existing instance
-  if (db) return db;
+export async function initIndex(): Promise<Database.Database> {
+  const indexDir = getIndexDir();
 
-  // If initialization is in progress, wait for it (prevents race condition)
-  if (dbInitPromise) return dbInitPromise;
+  // Ensure directory exists
+  if (!existsSync(indexDir)) {
+    await mkdir(indexDir, { recursive: true });
+  }
 
-  // Start initialization and store the promise
-  dbInitPromise = (async () => {
-    const indexPath = getIndexPath();
-    const indexDir = getIndexDir();
-
-    // Ensure directory exists
-    if (!existsSync(indexDir)) {
-      await mkdir(indexDir, { recursive: true });
-    }
-
-    // Try to restore existing index
-    if (existsSync(indexPath)) {
-      try {
-        const data = await readFile(indexPath, 'utf-8');
-        db = (await restore('json', data)) as Orama<typeof SCHEMA>;
-        return db;
-      } catch (error) {
-        console.warn('Failed to load index, creating new one:', error);
-      }
-    }
-
-    // Create new index if no existing data
-    db = await create({ schema: SCHEMA });
-    return db;
-  })();
-
-  return dbInitPromise;
+  return getDb();
 }
 
 /**
  * Save the index to disk.
  *
- * Waits for all pending write operations to complete before persisting.
- * Persists current index state to `.dseek/index/orama.json`.
+ * With SQLite + WAL mode, data is persisted automatically.
+ * This function is kept for API compatibility but is a no-op.
  */
 export async function saveIndex(): Promise<void> {
-  if (!db) return;
-
-  // Wait for any pending write operations to complete
-  await dbWriteLock;
-
-  const indexPath = getIndexPath();
-  const data = await persist(db, 'json');
-  await writeFile(indexPath, data as string);
+  // No-op - SQLite auto-persists with WAL mode
+  // Optionally checkpoint WAL file
+  const db = getDb();
+  db.pragma('wal_checkpoint(PASSIVE)');
 }
 
 /**
  * Get the current database instance
  */
-export async function getDb(): Promise<Orama<typeof SCHEMA>> {
-  if (!db) {
-    db = await initIndex();
-  }
-  return db;
+export async function getDatabase(): Promise<Database.Database> {
+  return getDb();
 }
 
 /**
- * Insert a single chunk into the index with mutex protection.
+ * Insert a single chunk into the index.
  *
  * @param chunk - Chunk with text, embedding, and metadata
  */
 export async function insertChunk(chunk: Chunk): Promise<void> {
-  const release = await acquireWriteLock();
-  try {
-    const database = await getDb();
+  const db = getDb();
 
-    const doc: ChunkDocument = {
-      doc_id: chunk.doc_id,
-      chunk_id: chunk.chunk_id,
-      text: chunk.text,
-      snippet: chunk.snippet,
-      line_start: chunk.line_start,
-      line_end: chunk.line_end,
-      page_start: chunk.page_start ?? 0,
-      page_end: chunk.page_end ?? 0,
-      embedding: chunk.embedding ?? [],
-    };
+  const insertChunkStmt = db.prepare(`
+    INSERT INTO chunks (chunk_id, doc_id, text, snippet, line_start, line_end, page_start, page_end)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-    await insert(database, doc);
-  } finally {
-    release();
+  const insertVecStmt = db.prepare(`
+    INSERT INTO chunks_vec (chunk_rowid, embedding) VALUES (?, ?)
+  `);
+
+  const result = insertChunkStmt.run(
+    chunk.chunk_id,
+    chunk.doc_id,
+    chunk.text,
+    chunk.snippet,
+    chunk.line_start,
+    chunk.line_end,
+    chunk.page_start ?? null,
+    chunk.page_end ?? null,
+  );
+
+  if (chunk.embedding && chunk.embedding.length > 0) {
+    // sqlite-vec requires BigInt for rowid and Float32Array for embedding
+    insertVecStmt.run(BigInt(result.lastInsertRowid), new Float32Array(chunk.embedding));
   }
 }
 
 /**
- * Insert multiple chunks into the index with mutex protection.
+ * Insert multiple chunks into the index.
  *
- * Uses a lock to serialize concurrent insert calls, preventing
- * Orama state corruption from parallel modifications.
+ * Uses a transaction for atomic insertion of all chunks.
  *
  * @param chunks - Array of chunks to insert
  */
 export async function insertChunks(chunks: Chunk[]): Promise<void> {
   if (chunks.length === 0) return;
 
-  const release = await acquireWriteLock();
-  try {
-    const database = await getDb();
+  const db = getDb();
 
-    const docs: ChunkDocument[] = chunks.map((chunk) => ({
-      doc_id: chunk.doc_id,
-      chunk_id: chunk.chunk_id,
-      text: chunk.text,
-      snippet: chunk.snippet,
-      line_start: chunk.line_start,
-      line_end: chunk.line_end,
-      page_start: chunk.page_start ?? 0,
-      page_end: chunk.page_end ?? 0,
-      embedding: chunk.embedding ?? [],
-    }));
+  const insertChunkStmt = db.prepare(`
+    INSERT INTO chunks (chunk_id, doc_id, text, snippet, line_start, line_end, page_start, page_end)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-    await insertMultiple(database, docs, LIMITS.EMBEDDING_BATCH_SIZE);
-  } finally {
-    release();
-  }
+  const insertVecStmt = db.prepare(`
+    INSERT INTO chunks_vec (chunk_rowid, embedding) VALUES (?, ?)
+  `);
+
+  const transaction = db.transaction((chunks: Chunk[]) => {
+    for (const chunk of chunks) {
+      const result = insertChunkStmt.run(
+        chunk.chunk_id,
+        chunk.doc_id,
+        chunk.text,
+        chunk.snippet,
+        chunk.line_start,
+        chunk.line_end,
+        chunk.page_start ?? null,
+        chunk.page_end ?? null,
+      );
+
+      if (chunk.embedding && chunk.embedding.length > 0) {
+        // sqlite-vec requires BigInt for rowid and Float32Array for embedding
+        insertVecStmt.run(BigInt(result.lastInsertRowid), new Float32Array(chunk.embedding));
+      }
+    }
+  });
+
+  transaction(chunks);
 }
 
 /**
- * Remove all chunks for a document with mutex protection.
+ * Remove all chunks for a document.
  *
  * @param docId - Document identifier (relative path)
  * @returns Number of chunks removed
  */
 export async function removeDocument(docId: string): Promise<number> {
-  const release = await acquireWriteLock();
-  try {
-    const database = await getDb();
-    let totalRemoved = 0;
+  const db = getDb();
 
-    // Loop until all chunks are removed (handles >1000 chunks)
-    // Note: Orama's where clause doesn't do exact match, so we filter manually
-    while (true) {
-      const results = (await search(database, {
-        term: '',
-        limit: LIMITS.MAX_CHUNKS_PER_SEARCH,
-      })) as Results<ChunkDocument>;
+  // Get chunk IDs for vector deletion
+  const chunks = db.prepare('SELECT id FROM chunks WHERE doc_id = ?').all(docId) as { id: number }[];
 
-      // Filter for exact doc_id match (Orama where clause is broken for strings)
-      const matchingHits = results.hits.filter((hit) => hit.document.doc_id === docId);
+  if (chunks.length === 0) return 0;
 
-      if (matchingHits.length === 0) break;
+  const deleteVecStmt = db.prepare('DELETE FROM chunks_vec WHERE chunk_rowid = ?');
+  const deleteChunkStmt = db.prepare('DELETE FROM chunks WHERE doc_id = ?');
 
-      for (const hit of matchingHits) {
-        await remove(database, hit.id);
-        totalRemoved++;
-      }
+  const transaction = db.transaction(() => {
+    // Delete from vec table first
+    for (const chunk of chunks) {
+      deleteVecStmt.run(chunk.id);
     }
 
-    return totalRemoved;
-  } finally {
-    release();
-  }
+    // Delete from main table (FTS5 auto-synced via trigger)
+    const result = deleteChunkStmt.run(docId);
+    return result.changes;
+  });
+
+  return transaction();
 }
 
 /**
- * Search the index using hybrid BM25 + vector mode.
+ * Search the index using hybrid BM25 + vector mode with RRF fusion.
  *
  * @param query - Search query text
  * @param embedding - Query embedding vector (768 dimensions)
@@ -281,7 +205,7 @@ export async function searchIndex(
     keywordWeight?: number;
   } = {},
 ): Promise<{ results: SearchResult[]; total: number }> {
-  const database = await getDb();
+  const db = getDb();
 
   const {
     limit = LIMITS.DEFAULT_RESULTS,
@@ -290,39 +214,220 @@ export async function searchIndex(
     keywordWeight = RETRIEVAL_WEIGHTS.KEYWORD,
   } = options;
 
-  const results = (await search(database, {
-    mode: 'hybrid',
-    term: query,
-    vector: {
-      value: embedding,
-      property: 'embedding',
-    },
-    hybridWeights: {
-      text: keywordWeight,
-      vector: semanticWeight,
-    },
-    limit: limit + offset,
-    similarity: SEARCH.MIN_SIMILARITY,
-  })) as Results<ChunkDocument>;
+  const k = SQLITE.RRF_K;
+  // Fetch consistent number of candidates for RRF merging to ensure stable pagination
+  // Use a minimum of 50 candidates to ensure ranking stability across pages
+  const fetchLimit = Math.max(limit + offset, 50) * 2;
 
-  // Apply offset
-  const hits = results.hits.slice(offset, offset + limit);
+  // Prepare the RRF hybrid search query
+  // This combines FTS5 BM25 results with vector similarity using RRF
+  const hybridQuery = db.prepare(`
+    WITH vec_matches AS (
+      SELECT chunk_rowid,
+        row_number() OVER (ORDER BY distance) as rank_num,
+        distance
+      FROM chunks_vec
+      WHERE embedding MATCH ?
+        AND k = ?
+    ),
+    fts_matches AS (
+      SELECT rowid,
+        row_number() OVER (ORDER BY rank) as rank_num
+      FROM chunks_fts
+      WHERE chunks_fts MATCH ?
+      LIMIT ?
+    ),
+    combined AS (
+      SELECT f.rowid as id, f.rank_num as fts_rank, v.rank_num as vec_rank
+      FROM fts_matches f
+      LEFT JOIN vec_matches v ON f.rowid = v.chunk_rowid
+      UNION ALL
+      SELECT v.chunk_rowid, NULL, v.rank_num
+      FROM vec_matches v
+      WHERE NOT EXISTS (SELECT 1 FROM fts_matches f WHERE f.rowid = v.chunk_rowid)
+    )
+    SELECT
+      c.chunk_id, c.doc_id, c.snippet, c.line_start, c.line_end,
+      c.page_start, c.page_end,
+      (
+        COALESCE(1.0 / (? + combined.fts_rank), 0.0) * ? +
+        COALESCE(1.0 / (? + combined.vec_rank), 0.0) * ?
+      ) as score
+    FROM combined
+    JOIN chunks c ON c.id = combined.id
+    ORDER BY score DESC
+    LIMIT ? OFFSET ?
+  `);
 
-  const searchResults: SearchResult[] = hits.map((hit) => ({
-    chunk_id: hit.document.chunk_id,
-    path: hit.document.doc_id,
-    line_start: hit.document.line_start,
-    line_end: hit.document.line_end,
-    page_start: hit.document.page_start || null,
-    page_end: hit.document.page_end || null,
-    score: hit.score,
-    snippet: hit.document.snippet,
-  }));
+  // Query for total count (approximation based on each search type)
+  const countFtsQuery = db.prepare(`
+    SELECT COUNT(*) as count FROM chunks_fts WHERE chunks_fts MATCH ?
+  `);
+
+  let results: SearchResult[] = [];
+  let total = 0;
+
+  // Handle empty query (vector-only search)
+  if (!query.trim()) {
+    // Vector-only search
+    const vecOnlyQuery = db.prepare(`
+      SELECT
+        c.chunk_id, c.doc_id, c.snippet, c.line_start, c.line_end,
+        c.page_start, c.page_end,
+        (1.0 - v.distance) as score
+      FROM chunks_vec v
+      JOIN chunks c ON c.id = v.chunk_rowid
+      WHERE v.embedding MATCH ?
+        AND v.k = ?
+      ORDER BY v.distance
+      LIMIT ? OFFSET ?
+    `);
+
+    const embeddingBuffer = new Float32Array(embedding);
+    const vecResults = vecOnlyQuery.all(embeddingBuffer, fetchLimit, limit, offset) as Array<{
+      chunk_id: string;
+      doc_id: string;
+      snippet: string;
+      line_start: number;
+      line_end: number;
+      page_start: number | null;
+      page_end: number | null;
+      score: number;
+    }>;
+
+    results = vecResults
+      .filter((r) => r.score >= SEARCH.MIN_SIMILARITY)
+      .map((r) => ({
+        chunk_id: r.chunk_id,
+        path: r.doc_id,
+        line_start: r.line_start,
+        line_end: r.line_end,
+        page_start: r.page_start,
+        page_end: r.page_end,
+        score: r.score,
+        snippet: r.snippet,
+      }));
+
+    // Get approximate total
+    const countResult = db.prepare('SELECT COUNT(*) as count FROM chunks').get() as { count: number };
+    total = countResult.count;
+  } else {
+    // Hybrid search with RRF
+    try {
+      const embeddingBuffer = new Float32Array(embedding);
+
+      // Escape special FTS5 characters in query
+      const ftsQuery = escapeFtsQuery(query);
+
+      const hybridResults = hybridQuery.all(
+        embeddingBuffer,
+        fetchLimit,
+        ftsQuery,
+        fetchLimit,
+        k,
+        keywordWeight,
+        k,
+        semanticWeight,
+        limit,
+        offset,
+      ) as Array<{
+        chunk_id: string;
+        doc_id: string;
+        snippet: string;
+        line_start: number;
+        line_end: number;
+        page_start: number | null;
+        page_end: number | null;
+        score: number;
+      }>;
+
+      results = hybridResults.map((r) => ({
+        chunk_id: r.chunk_id,
+        path: r.doc_id,
+        line_start: r.line_start,
+        line_end: r.line_end,
+        page_start: r.page_start,
+        page_end: r.page_end,
+        score: r.score,
+        snippet: r.snippet,
+      }));
+
+      // Get FTS match count as approximation
+      const countResult = countFtsQuery.get(ftsQuery) as { count: number };
+      total = countResult.count;
+    } catch (error) {
+      // Fallback to vector-only if FTS query fails (e.g., invalid syntax)
+      console.warn('FTS query failed, falling back to vector-only search:', error);
+
+      const vecOnlyQuery = db.prepare(`
+        SELECT
+          c.chunk_id, c.doc_id, c.snippet, c.line_start, c.line_end,
+          c.page_start, c.page_end,
+          (1.0 - v.distance) as score
+        FROM chunks_vec v
+        JOIN chunks c ON c.id = v.chunk_rowid
+        WHERE v.embedding MATCH ?
+          AND v.k = ?
+        ORDER BY v.distance
+        LIMIT ? OFFSET ?
+      `);
+
+      const embeddingBuffer = new Float32Array(embedding);
+      const vecResults = vecOnlyQuery.all(embeddingBuffer, fetchLimit, limit, offset) as Array<{
+        chunk_id: string;
+        doc_id: string;
+        snippet: string;
+        line_start: number;
+        line_end: number;
+        page_start: number | null;
+        page_end: number | null;
+        score: number;
+      }>;
+
+      results = vecResults
+        .filter((r) => r.score >= SEARCH.MIN_SIMILARITY)
+        .map((r) => ({
+          chunk_id: r.chunk_id,
+          path: r.doc_id,
+          line_start: r.line_start,
+          line_end: r.line_end,
+          page_start: r.page_start,
+          page_end: r.page_end,
+          score: r.score,
+          snippet: r.snippet,
+        }));
+
+      total = results.length;
+    }
+  }
 
   return {
-    results: searchResults,
-    total: results.count,
+    results,
+    total,
   };
+}
+
+/**
+ * Escape special FTS5 query characters.
+ *
+ * @param query - Raw query string
+ * @returns Escaped query safe for FTS5
+ */
+function escapeFtsQuery(query: string): string {
+  // Escape special FTS5 operators: " - * OR AND NOT NEAR
+  // Wrap terms in quotes if they contain special characters
+  return query
+    .replace(/"/g, '""') // Escape quotes
+    .split(/\s+/)
+    .filter((term) => term.length > 0)
+    .map((term) => {
+      // If term contains special chars, quote it
+      if (/[^\w\u0400-\u04FF\u4e00-\u9fff]/.test(term)) {
+        return `"${term}"`;
+      }
+      return term;
+    })
+    .join(' ');
 }
 
 /**
@@ -334,23 +439,14 @@ export async function getIndexStats(): Promise<{
   chunks: number;
   documents: Set<string>;
 }> {
-  const database = await getDb();
-  const totalChunks = await count(database);
+  const db = getDb();
 
-  // Get unique documents
-  const results = (await search(database, {
-    term: '',
-    limit: LIMITS.MAX_DOCS_STATS_SCAN,
-  })) as Results<ChunkDocument>;
-
-  const documents = new Set<string>();
-  for (const hit of results.hits) {
-    documents.add(hit.document.doc_id);
-  }
+  const chunkCount = db.prepare('SELECT COUNT(*) as count FROM chunks').get() as { count: number };
+  const docIds = db.prepare('SELECT DISTINCT doc_id FROM chunks').all() as { doc_id: string }[];
 
   return {
-    chunks: totalChunks,
-    documents,
+    chunks: chunkCount.count,
+    documents: new Set(docIds.map((d) => d.doc_id)),
   };
 }
 
@@ -361,26 +457,28 @@ export async function getIndexStats(): Promise<{
  * @returns True if document has indexed chunks
  */
 export async function documentExists(docId: string): Promise<boolean> {
-  const database = await getDb();
-
-  const results = await search(database, {
-    term: docId,
-    properties: ['doc_id'],
-    limit: 1,
-  });
-
-  return results.count > 0;
+  const db = getDb();
+  const result = db.prepare('SELECT 1 FROM chunks WHERE doc_id = ? LIMIT 1').get(docId);
+  return result !== undefined;
 }
 
 /**
- * Reset the index (for testing)
+ * Reset the index (for testing).
+ *
+ * Clears all data from chunks, vectors, and related tables.
  */
 export async function resetIndex(): Promise<void> {
-  const release = await acquireWriteLock();
-  try {
-    db = await create({ schema: SCHEMA });
-    dbInitPromise = null; // Clear init promise so fresh initialization can occur
-  } finally {
-    release();
-  }
+  const db = getDb();
+
+  db.exec(`
+    DELETE FROM chunks_vec;
+    DELETE FROM chunks;
+    DELETE FROM documents;
+    DELETE FROM index_events;
+  `);
 }
+
+/**
+ * Close the database connection.
+ */
+export { closeDb };

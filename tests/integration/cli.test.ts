@@ -18,6 +18,8 @@ const CLI_PATH = join(process.cwd(), 'bin/dseek.ts');
 
 /**
  * Run CLI command and return output
+ *
+ * Always uses pipe for stdin/stdout/stderr to prevent stderr pollution in JSON output.
  */
 function runCLI(args: string, expectError = false): string {
   try {
@@ -25,7 +27,7 @@ function runCLI(args: string, expectError = false): string {
       cwd: TEST_DIR,
       encoding: 'utf-8',
       env: { ...process.env, DSEEK_PROJECT_ROOT: TEST_DIR },
-      stdio: expectError ? ['pipe', 'pipe', 'pipe'] : undefined,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (error: unknown) {
     if (error && typeof error === 'object') {

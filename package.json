@@ -1,6 +1,6 @@
 {
   "name": "@dseek/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local-first documentation search CLI with hybrid retrieval",
   "type": "module",
   "license": "MIT",
@@ -16,7 +16,7 @@
   },
   "scripts": {
     "dev": "tsx bin/dseek.ts",
-    "build": "npx esbuild bin/dseek.ts --bundle --platform=node --format=esm --outfile=dist/dseek.js --banner:js='#!/usr/bin/env node\nimport{createRequire}from\"node:module\";const require=createRequire(import.meta.url);' --packages=external --define:__VERSION__='\"1.0.0\"'",
+    "build": "npx esbuild bin/dseek.ts --bundle --platform=node --format=esm --outfile=dist/dseek.js --banner:js='#!/usr/bin/env node\nimport{createRequire}from\"node:module\";const require=createRequire(import.meta.url);' --packages=external --define:__VERSION__='\"1.0.1\"'",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -28,8 +28,8 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
-    "@orama/orama": "^3.0.0",
-    "@orama/plugin-data-persistence": "^3.1.18",
+    "better-sqlite3": "^11.0.0",
+    "sqlite-vec": "^0.1.6",
     "cheerio": "^1.0.0",
     "chokidar": "^4.0.0",
     "commander": "^12.0.0",
@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.10",
+    "@types/better-sqlite3": "^7.6.11",
     "@vitest/coverage-v8": "^2.1.8",
     "esbuild": "^0.27.2",
     "pdf-lib": "^1.17.1",

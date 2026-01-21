@@ -6,6 +6,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { EMBEDDING_CONFIG } from '../../src/core/constants.js';
 import {
   getIndexStats,
   insertChunk,
@@ -17,11 +18,11 @@ import {
 import type { Chunk } from '../../src/types/index.js';
 
 /**
- * Generate deterministic fake embedding (384 dims)
+ * Generate deterministic fake embedding (768 dims)
  * Uses one-hot style for predictable similarity comparisons
  */
 function fakeEmbedding(seed: number): number[] {
-  const dim = 384;
+  const dim = EMBEDDING_CONFIG.DIMENSIONS;
   const emb = new Array(dim).fill(0);
   // Set a few positions based on seed for some structure
   emb[seed % dim] = 0.8;

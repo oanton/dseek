@@ -7,6 +7,7 @@
  */
 
 import { Command } from 'commander';
+import { checkAndMigrate } from '../storage/migrate.js';
 import { addCommand } from './commands/add.js';
 import { auditCommand } from './commands/audit.js';
 import { bootstrapCommand } from './commands/bootstrap.js';
@@ -43,6 +44,9 @@ export function createCLI(): Command {
 }
 
 export async function runCLI(args: string[] = process.argv): Promise<void> {
+  // Check for and perform migration from Orama to SQLite if needed
+  await checkAndMigrate();
+
   const program = createCLI();
   await program.parseAsync(args);
 }

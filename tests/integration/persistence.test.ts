@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { initializeProject, loadConfig, saveConfig } from '../../src/core/config.js';
+import { EMBEDDING_CONFIG } from '../../src/core/constants.js';
 import { getIndexStats, initIndex, insertChunk, resetIndex, saveIndex } from '../../src/storage/index.js';
 import {
   getDocument,
@@ -23,10 +24,10 @@ const DSEEK_DIR = join(TEST_DIR, '.dseek');
 const INDEX_DIR = join(DSEEK_DIR, 'index');
 
 /**
- * Generate deterministic fake embedding (384 dims)
+ * Generate deterministic fake embedding (768 dims)
  */
 function fakeEmbedding(seed: number): number[] {
-  const dim = 384;
+  const dim = EMBEDDING_CONFIG.DIMENSIONS;
   const emb = new Array(dim).fill(0);
   emb[seed % dim] = 0.8;
   emb[(seed * 7) % dim] = 0.4;
@@ -76,8 +77,8 @@ describe('Persistence', () => {
     expect(stats.chunks).toBeGreaterThanOrEqual(1);
     expect(stats.documents.has('persist.md')).toBe(true);
 
-    // Verify file was written to disk
-    const indexPath = join(INDEX_DIR, 'orama.json');
+    // Verify database file was written to disk
+    const indexPath = join(INDEX_DIR, 'dseek.db');
     expect(existsSync(indexPath)).toBe(true);
   });
 

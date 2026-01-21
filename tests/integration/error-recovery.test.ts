@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:f
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { initializeProject } from '../../src/core/config.js';
+import { EMBEDDING_CONFIG } from '../../src/core/constants.js';
 import { indexFile } from '../../src/core/indexer.js';
 import { resetIndex, searchIndex } from '../../src/storage/index.js';
 import { resetMetadata } from '../../src/storage/metadata.js';
@@ -57,7 +58,7 @@ describe('Error Recovery', () => {
 
   it('search handles empty query gracefully', async () => {
     // Empty embedding (all zeros) - no indexing needed for this test
-    const emptyEmbedding = new Array(384).fill(0);
+    const emptyEmbedding = new Array(EMBEDDING_CONFIG.DIMENSIONS).fill(0);
 
     // Should not throw, even with empty index
     const { results, total } = await searchIndex('', emptyEmbedding);

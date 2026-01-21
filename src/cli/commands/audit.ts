@@ -6,10 +6,19 @@
  * @module cli/commands/audit
  */
 
-import { search as oramaSearch } from '@orama/orama';
 import { Command } from 'commander';
 import { DEFAULTS, LIMITS, SEARCH } from '../../core/constants.js';
-import { getDb } from '../../storage/index.js';
+import { getDb } from '../../storage/sqlite.js';
+
+interface ChunkWithEmbedding {
+  chunk_id: string;
+  doc_id: string;
+  text: string;
+  snippet: string;
+  line_start: number;
+  line_end: number;
+  embedding: number[];
+}
 
 interface DuplicateGroup {
   chunks: Array<{
@@ -48,34 +57,72 @@ export const auditCommand = new Command('audit')
     }
   });
 
+/**
+ * Get all chunks with embeddings from the database.
+ */
+function getAllChunksWithEmbeddings(): ChunkWithEmbedding[] {
+  const db = getDb();
+
+  // Get all chunks
+  const chunkRows = db
+    .prepare(
+      `
+    SELECT c.id, c.chunk_id, c.doc_id, c.text, c.snippet, c.line_start, c.line_end
+    FROM chunks c
+    LIMIT ?
+  `,
+    )
+    .all(LIMITS.MAX_DOCS_STATS_SCAN) as Array<{
+    id: number;
+    chunk_id: string;
+    doc_id: string;
+    text: string;
+    snippet: string;
+    line_start: number;
+    line_end: number;
+  }>;
+
+  // Get embeddings for each chunk
+  const getEmbeddingStmt = db.prepare(`
+    SELECT embedding FROM chunks_vec WHERE chunk_rowid = ?
+  `);
+
+  const chunks: ChunkWithEmbedding[] = [];
+
+  for (const row of chunkRows) {
+    const vecRow = getEmbeddingStmt.get(row.id) as { embedding: ArrayBuffer } | undefined;
+
+    if (vecRow) {
+      // Convert Float32Array back from ArrayBuffer
+      const embedding = Array.from(new Float32Array(vecRow.embedding));
+
+      chunks.push({
+        chunk_id: row.chunk_id,
+        doc_id: row.doc_id,
+        text: row.text,
+        snippet: row.snippet,
+        line_start: row.line_start,
+        line_end: row.line_end,
+        embedding,
+      });
+    }
+  }
+
+  return chunks;
+}
+
 async function auditDuplicates(options: { threshold: string; limit: string; json?: boolean }): Promise<void> {
   const threshold = parseFloat(options.threshold);
   const limit = parseInt(options.limit, 10);
 
   console.log(`Searching for near-duplicate content (threshold: ${threshold})...\n`);
 
-  const db = await getDb();
+  const chunks = getAllChunksWithEmbeddings();
 
-  // Get all chunks
-  const allResults = await oramaSearch(db, {
-    term: '',
-    limit: LIMITS.MAX_DOCS_STATS_SCAN,
-  });
-
-  if (allResults.hits.length === 0) {
+  if (chunks.length === 0) {
     console.log('No chunks in index.');
     return;
   }
-
-  const chunks = allResults.hits.map((hit) => ({
-    chunk_id: (hit.document as { chunk_id: string }).chunk_id,
-    doc_id: (hit.document as { doc_id: string }).doc_id,
-    text: (hit.document as { text: string }).text,
-    snippet: (hit.document as { snippet: string }).snippet,
-    line_start: (hit.document as { line_start: number }).line_start,
-    line_end: (hit.document as { line_end: number }).line_end,
-    embedding: (hit.document as { embedding: number[] }).embedding,
-  }));
 
   // Find duplicates using pairwise similarity
   const duplicates: DuplicateGroup[] = [];
@@ -152,28 +199,12 @@ async function auditConflicts(options: { threshold: string; limit: string; json?
   // 1. Similar topics (high semantic similarity)
   // 2. Different values/statements (lexical differences)
 
-  const db = await getDb();
+  const chunks = getAllChunksWithEmbeddings();
 
-  // Get all chunks
-  const allResults = await oramaSearch(db, {
-    term: '',
-    limit: LIMITS.MAX_DOCS_STATS_SCAN,
-  });
-
-  if (allResults.hits.length === 0) {
+  if (chunks.length === 0) {
     console.log('No chunks in index.');
     return;
   }
-
-  const chunks = allResults.hits.map((hit) => ({
-    chunk_id: (hit.document as { chunk_id: string }).chunk_id,
-    doc_id: (hit.document as { doc_id: string }).doc_id,
-    text: (hit.document as { text: string }).text,
-    snippet: (hit.document as { snippet: string }).snippet,
-    line_start: (hit.document as { line_start: number }).line_start,
-    line_end: (hit.document as { line_end: number }).line_end,
-    embedding: (hit.document as { embedding: number[] }).embedding,
-  }));
 
   // Look for conflict patterns
   const conflicts: Array<{

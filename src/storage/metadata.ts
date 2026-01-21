@@ -1,99 +1,22 @@
 /**
  * Document metadata storage
  *
- * Stores document metadata separately from the search index.
+ * Stores document metadata in SQLite database.
  * Tracks content hashes for incremental updates and index events.
  *
  * @module metadata
  */
 
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { getDseekDir } from '../core/config.js';
-import { DIRS, FILES } from '../core/constants.js';
 import type { Document, IndexEvent } from '../types/index.js';
-
-interface MetadataStore {
-  version: 1;
-  documents: Record<string, Document>;
-  last_event: IndexEvent | null;
-  index_version: string;
-  updated_at: string;
-}
-
-let store: MetadataStore | null = null;
+import { getDb } from './sqlite.js';
 
 /**
- * Get metadata file path
- */
-function getMetadataPath(): string {
-  return join(getDseekDir(), DIRS.INDEX, FILES.METADATA);
-}
-
-/**
- * Create empty store
- */
-function createEmptyStore(): MetadataStore {
-  return {
-    version: 1,
-    documents: {},
-    last_event: null,
-    index_version: generateIndexVersion(),
-    updated_at: new Date().toISOString(),
-  };
-}
-
-/**
- * Generate index version
+ * Generate index version string.
+ *
+ * @returns Unique version identifier
  */
 function generateIndexVersion(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
-}
-
-/**
- * Load metadata store from disk.
- *
- * Uses singleton pattern - creates empty store if file doesn't exist.
- *
- * @returns Metadata store with documents and events
- */
-export async function loadMetadata(): Promise<MetadataStore> {
-  if (store) return store;
-
-  const metadataPath = getMetadataPath();
-
-  if (existsSync(metadataPath)) {
-    try {
-      const data = await readFile(metadataPath, 'utf-8');
-      store = JSON.parse(data) as MetadataStore;
-      return store;
-    } catch (error) {
-      console.warn('Failed to load metadata, creating new store:', error);
-    }
-  }
-
-  store = createEmptyStore();
-  return store;
-}
-
-/**
- * Save metadata store to disk.
- *
- * Persists to `.dseek/index/metadata.json`.
- */
-export async function saveMetadata(): Promise<void> {
-  if (!store) return;
-
-  const metadataPath = getMetadataPath();
-  const indexDir = join(getDseekDir(), DIRS.INDEX);
-
-  if (!existsSync(indexDir)) {
-    await mkdir(indexDir, { recursive: true });
-  }
-
-  store.updated_at = new Date().toISOString();
-  await writeFile(metadataPath, JSON.stringify(store, null, 2));
 }
 
 /**
@@ -103,8 +26,35 @@ export async function saveMetadata(): Promise<void> {
  * @returns Document metadata or null if not found
  */
 export async function getDocument(docId: string): Promise<Document | null> {
-  const metadata = await loadMetadata();
-  return metadata.documents[docId] ?? null;
+  const db = getDb();
+  const result = db
+    .prepare(
+      `
+    SELECT doc_id, source_name, format, content_hash, updated_at, size_bytes
+    FROM documents WHERE doc_id = ?
+  `,
+    )
+    .get(docId) as
+    | {
+        doc_id: string;
+        source_name: string;
+        format: string;
+        content_hash: string;
+        updated_at: string;
+        size_bytes: number;
+      }
+    | undefined;
+
+  if (!result) return null;
+
+  return {
+    doc_id: result.doc_id,
+    source_name: result.source_name,
+    format: result.format as Document['format'],
+    content_hash: result.content_hash,
+    updated_at: result.updated_at,
+    size_bytes: result.size_bytes,
+  };
 }
 
 /**
@@ -113,9 +63,14 @@ export async function getDocument(docId: string): Promise<Document | null> {
  * @param doc - Document metadata to store
  */
 export async function setDocument(doc: Document): Promise<void> {
-  const metadata = await loadMetadata();
-  metadata.documents[doc.doc_id] = doc;
-  metadata.index_version = generateIndexVersion();
+  const db = getDb();
+
+  db.prepare(
+    `
+    INSERT OR REPLACE INTO documents (doc_id, source_name, format, content_hash, updated_at, size_bytes)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `,
+  ).run(doc.doc_id, doc.source_name, doc.format, doc.content_hash, doc.updated_at, doc.size_bytes);
 }
 
 /**
@@ -125,15 +80,9 @@ export async function setDocument(doc: Document): Promise<void> {
  * @returns True if document was found and removed
  */
 export async function removeDocument(docId: string): Promise<boolean> {
-  const metadata = await loadMetadata();
-
-  if (metadata.documents[docId]) {
-    delete metadata.documents[docId];
-    metadata.index_version = generateIndexVersion();
-    return true;
-  }
-
-  return false;
+  const db = getDb();
+  const result = db.prepare('DELETE FROM documents WHERE doc_id = ?').run(docId);
+  return result.changes > 0;
 }
 
 /**
@@ -142,8 +91,31 @@ export async function removeDocument(docId: string): Promise<boolean> {
  * @returns Array of all document metadata
  */
 export async function getAllDocuments(): Promise<Document[]> {
-  const metadata = await loadMetadata();
-  return Object.values(metadata.documents);
+  const db = getDb();
+  const results = db
+    .prepare(
+      `
+    SELECT doc_id, source_name, format, content_hash, updated_at, size_bytes
+    FROM documents
+  `,
+    )
+    .all() as Array<{
+    doc_id: string;
+    source_name: string;
+    format: string;
+    content_hash: string;
+    updated_at: string;
+    size_bytes: number;
+  }>;
+
+  return results.map((r) => ({
+    doc_id: r.doc_id,
+    source_name: r.source_name,
+    format: r.format as Document['format'],
+    content_hash: r.content_hash,
+    updated_at: r.updated_at,
+    size_bytes: r.size_bytes,
+  }));
 }
 
 /**
@@ -152,32 +124,78 @@ export async function getAllDocuments(): Promise<Document[]> {
  * @returns Number of indexed documents
  */
 export async function getDocumentCount(): Promise<number> {
-  const metadata = await loadMetadata();
-  return Object.keys(metadata.documents).length;
+  const db = getDb();
+  const result = db.prepare('SELECT COUNT(*) as count FROM documents').get() as { count: number };
+  return result.count;
 }
 
 /**
- * Record an event
+ * Record an index event.
+ *
+ * @param event - Event to record
  */
 export async function recordEvent(event: IndexEvent): Promise<void> {
-  const metadata = await loadMetadata();
-  metadata.last_event = event;
+  const db = getDb();
+  db.prepare(
+    `
+    INSERT INTO index_events (type, path, at) VALUES (?, ?, ?)
+  `,
+  ).run(event.type, event.path, event.at);
 }
 
 /**
- * Get last event
+ * Get last recorded event.
+ *
+ * @returns Most recent index event or null
  */
 export async function getLastEvent(): Promise<IndexEvent | null> {
-  const metadata = await loadMetadata();
-  return metadata.last_event;
+  const db = getDb();
+  const result = db
+    .prepare(
+      `
+    SELECT type, path, at FROM index_events
+    ORDER BY id DESC LIMIT 1
+  `,
+    )
+    .get() as { type: string; path: string; at: string } | undefined;
+
+  if (!result) return null;
+
+  return {
+    type: result.type as IndexEvent['type'],
+    path: result.path,
+    at: result.at,
+  };
 }
 
 /**
- * Get index version
+ * Get index version.
+ *
+ * @returns Current index version string
  */
 export async function getIndexVersion(): Promise<string> {
-  const metadata = await loadMetadata();
-  return metadata.index_version;
+  const db = getDb();
+  const result = db.prepare("SELECT value FROM meta WHERE key = 'index_version'").get() as
+    | { value: string }
+    | undefined;
+
+  if (!result) {
+    // Initialize index version
+    const version = generateIndexVersion();
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('index_version', ?)").run(version);
+    return version;
+  }
+
+  return result.value;
+}
+
+/**
+ * Update index version (called after modifications).
+ */
+async function updateIndexVersion(): Promise<void> {
+  const db = getDb();
+  const version = generateIndexVersion();
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('index_version', ?)").run(version);
 }
 
 /**
@@ -196,8 +214,53 @@ export async function needsUpdate(docId: string, contentHash: string): Promise<b
 }
 
 /**
- * Reset metadata (for testing)
+ * Reset metadata (for testing).
+ *
+ * Clears all documents and events from database.
  */
 export async function resetMetadata(): Promise<void> {
-  store = createEmptyStore();
+  const db = getDb();
+  db.exec(`
+    DELETE FROM documents;
+    DELETE FROM index_events;
+    DELETE FROM meta WHERE key = 'index_version';
+  `);
+}
+
+/**
+ * Load metadata store (for compatibility).
+ *
+ * With SQLite, this is a no-op since data is stored in DB.
+ *
+ * @returns Empty metadata store object
+ */
+export async function loadMetadata(): Promise<{
+  version: 1;
+  documents: Record<string, Document>;
+  last_event: IndexEvent | null;
+  index_version: string;
+  updated_at: string;
+}> {
+  const docs = await getAllDocuments();
+  const lastEvent = await getLastEvent();
+  const indexVersion = await getIndexVersion();
+
+  return {
+    version: 1,
+    documents: Object.fromEntries(docs.map((d) => [d.doc_id, d])),
+    last_event: lastEvent,
+    index_version: indexVersion,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Save metadata store (for compatibility).
+ *
+ * With SQLite, this is a no-op since data is persisted automatically.
+ */
+export async function saveMetadata(): Promise<void> {
+  // No-op - SQLite auto-persists
+  // Just update the index version to signal changes
+  await updateIndexVersion();
 }
