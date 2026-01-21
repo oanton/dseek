@@ -17,7 +17,7 @@ DSEEK indexes your project documentation and provides fast, accurate search usin
 ### From GitHub Release (recommended)
 
 ```bash
-npm install -g https://github.com/oanton/dseek/releases/download/v1.0.0/dseek-cli-1.0.0.tgz
+npm install -g https://github.com/oanton/dseek/releases/download/v1.0.1/dseek-cli-1.0.1.tgz
 ```
 
 ### From Source
@@ -61,6 +61,8 @@ dseek search "authentication flow"
 | `dseek add <path>` | Add a docs folder to index |
 | `dseek search "<query>"` | Search with hybrid retrieval |
 | `dseek search "<query>" --rerank` | Search with cross-encoder reranking |
+| `dseek search "<query>" --path <prefix>` | Filter results by path prefix |
+| `dseek search "<query>" --source <name>` | Filter results by source name |
 | `dseek chat "<query>"` | Get answer via local LLM (requires Ollama) |
 | `dseek chat "<query>" --rerank` | Chat with reranked context |
 | `dseek chat "<query>" --no-cite` | Chat without source citations |
