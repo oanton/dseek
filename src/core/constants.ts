@@ -212,3 +212,15 @@ export const SQLITE = {
   /** Schema version for migrations */
   SCHEMA_VERSION: 2,
 } as const;
+
+// ============================================================================
+// Output Format Configuration
+// ============================================================================
+
+/** Text output format for LLM-friendly search results */
+export const TEXT_FORMAT = {
+  /** Separator between results */
+  RESULT_SEPARATOR: '---',
+  /** Decimal places for score display */
+  SCORE_PRECISION: 2,
+} as const;

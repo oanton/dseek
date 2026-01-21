@@ -131,7 +131,7 @@ REST API endpoints
 `,
       );
 
-      const output = runCLI(`search dummy --batch ${queryFile}`);
+      const output = runCLI(`search dummy --batch ${queryFile} --json`);
       const results = JSON.parse(output);
 
       // Should return array of results (one per query)
@@ -155,7 +155,7 @@ REST API endpoints
       const queryFile = join(TEST_DIR, 'empty-queries.txt');
       writeFileSync(queryFile, '');
 
-      const output = runCLI(`search dummy --batch ${queryFile}`);
+      const output = runCLI(`search dummy --batch ${queryFile} --json`);
       const results = JSON.parse(output);
 
       // Should return empty array
@@ -174,7 +174,7 @@ database
 `,
       );
 
-      const output = runCLI(`search dummy --batch ${queryFile}`);
+      const output = runCLI(`search dummy --batch ${queryFile} --json`);
       const results = JSON.parse(output);
 
       // Should only have 2 results (empty lines skipped)
@@ -184,7 +184,7 @@ database
 
   describe('pagination', () => {
     it('returns cursor when more results available', () => {
-      const output = runCLI('search "documentation guide" --limit 1');
+      const output = runCLI('search "documentation guide" --limit 1 --json');
       const result = JSON.parse(output);
 
       // With limit 1 and multiple docs, should have cursor
@@ -199,7 +199,7 @@ database
 
     it('cursor retrieves next page of results', () => {
       // Get first page with small limit to ensure pagination
-      const firstPageOutput = runCLI('search "guide documentation" --limit 2');
+      const firstPageOutput = runCLI('search "guide documentation" --limit 2 --json');
       const firstPage = JSON.parse(firstPageOutput);
 
       // Verify first page has results
@@ -208,7 +208,7 @@ database
 
       // If we have a cursor, test pagination
       if (firstPage.cursor) {
-        const secondPageOutput = runCLI(`search "guide documentation" --limit 2 --cursor ${firstPage.cursor}`);
+        const secondPageOutput = runCLI(`search "guide documentation" --limit 2 --json --cursor ${firstPage.cursor}`);
         const secondPage = JSON.parse(secondPageOutput);
 
         expect(secondPage).toHaveProperty('results');
@@ -232,7 +232,7 @@ database
     }, 120000);
 
     it('respects --limit option', () => {
-      const output = runCLI('search "API authentication database" --limit 2');
+      const output = runCLI('search "API authentication database" --limit 2 --json');
       const result = JSON.parse(output);
 
       expect(result.results.length).toBeLessThanOrEqual(2);
@@ -240,8 +240,16 @@ database
   });
 
   describe('output formatting', () => {
-    it('returns valid JSON by default', () => {
+    it('returns text format by default', () => {
       const output = runCLI('search "OAuth"');
+
+      // Default output should be text format
+      expect(output).toContain('# Query:');
+      expect(output).toContain('# Confidence:');
+    }, 120000);
+
+    it('--json flag returns valid JSON', () => {
+      const output = runCLI('search "OAuth" --json');
 
       // Should be valid JSON
       expect(() => JSON.parse(output)).not.toThrow();
@@ -252,8 +260,8 @@ database
       expect(result).toHaveProperty('results');
     }, 120000);
 
-    it('--pretty flag formats JSON nicely', () => {
-      const output = runCLI('search "database" --pretty');
+    it('--json --pretty flag formats JSON nicely', () => {
+      const output = runCLI('search "database" --json --pretty');
 
       // Pretty JSON should have newlines and indentation
       expect(output).toContain('\n');

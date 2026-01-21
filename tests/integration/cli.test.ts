@@ -124,7 +124,7 @@ Returns a list of all users.
       expect(listOutput).toContain('api-reference.md');
 
       // Step 4: Search returns results
-      const searchOutput = runCLI('search "OAuth authentication"');
+      const searchOutput = runCLI('search "OAuth authentication" --json');
       const searchResult = JSON.parse(searchOutput);
 
       expect(searchResult).toHaveProperty('results');
@@ -134,13 +134,13 @@ Returns a list of all users.
     });
 
     it('search respects --limit option', () => {
-      const output = runCLI('search "documentation" --limit 1');
+      const output = runCLI('search "documentation" --limit 1 --json');
       const result = JSON.parse(output);
       expect(result.results.length).toBeLessThanOrEqual(1);
     });
 
     it('search returns valid result structure', () => {
-      const output = runCLI('search "users API"');
+      const output = runCLI('search "users API" --json');
       const result = JSON.parse(output);
 
       expect(result).toHaveProperty('schema_version');

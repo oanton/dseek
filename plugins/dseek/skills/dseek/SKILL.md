@@ -33,7 +33,25 @@ dseek add ./docs
 ```bash
 dseek search "<query>" [--limit N] [--cursor X]
 ```
-Returns JSON with ranked chunks including file paths, line ranges, and snippets.
+Returns ranked chunks in text format with file paths, line ranges, scores, and snippets.
+
+Example output:
+```
+# Query: "authentication flow"
+# Confidence: 0.85 | Results: 3 | Index: ready
+
+---
+[docs/auth.md:45-67] score:0.92
+
+The authentication flow begins with validating the JWT token...
+
+---
+[docs/api.md:120-145] score:0.78
+
+To authenticate API requests, include the Bearer token...
+```
+
+Use `--json` flag for machine-parseable JSON output.
 
 ### Chat (with Ollama)
 ```bash
@@ -64,6 +82,6 @@ dseek search "<query>" --cursor <next_cursor>
 ## Best Practices
 
 1. Use specific, keyword-rich queries for better results
-2. Check `index_state` in response - if "updating", results may be incomplete
+2. Check `Index:` in response - if "updating", results may be incomplete
 3. For mixed UA/EN queries, results will match across languages
 4. Combine with file read when full context is needed
