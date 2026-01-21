@@ -104,6 +104,7 @@ export async function search(query: SearchQuery): Promise<SearchResponse> {
     offset,
     semanticWeight: config.retrieval.semantic_weight,
     keywordWeight: config.retrieval.keyword_weight,
+    filters: query.filters,
   });
 
   const searchTime = Date.now() - startTime;

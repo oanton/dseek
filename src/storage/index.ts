@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import type Database from 'better-sqlite3';
 import { LIMITS, RETRIEVAL_WEIGHTS, SEARCH, SQLITE } from '../core/constants.js';
-import type { Chunk, SearchResult } from '../types/index.js';
+import type { Chunk, SearchFilters, SearchResult } from '../types/index.js';
 import { closeDb, getDb, getDbPath, getIndexDir, resetDb } from './sqlite.js';
 
 /**
@@ -203,6 +203,7 @@ export async function searchIndex(
     offset?: number;
     semanticWeight?: number;
     keywordWeight?: number;
+    filters?: SearchFilters;
   } = {},
 ): Promise<{ results: SearchResult[]; total: number }> {
   const db = getDb();
@@ -212,7 +213,12 @@ export async function searchIndex(
     offset = 0,
     semanticWeight = RETRIEVAL_WEIGHTS.SEMANTIC,
     keywordWeight = RETRIEVAL_WEIGHTS.KEYWORD,
+    filters,
   } = options;
+
+  // Prepare filter values
+  const pathPrefix = filters?.path_prefix || null;
+  const sourceName = filters?.source_name || null;
 
   const k = SQLITE.RRF_K;
   // Fetch consistent number of candidates for RRF merging to ensure stable pagination
@@ -221,6 +227,7 @@ export async function searchIndex(
 
   // Prepare the RRF hybrid search query
   // This combines FTS5 BM25 results with vector similarity using RRF
+  // Filters are applied at the final SELECT stage after RRF combination
   const hybridQuery = db.prepare(`
     WITH vec_matches AS (
       SELECT chunk_rowid,
@@ -255,6 +262,9 @@ export async function searchIndex(
       ) as score
     FROM combined
     JOIN chunks c ON c.id = combined.id
+    LEFT JOIN documents d ON c.doc_id = d.doc_id
+    WHERE (? IS NULL OR c.doc_id LIKE ? || '%')
+      AND (? IS NULL OR d.source_name = ?)
     ORDER BY score DESC
     LIMIT ? OFFSET ?
   `);
@@ -269,7 +279,7 @@ export async function searchIndex(
 
   // Handle empty query (vector-only search)
   if (!query.trim()) {
-    // Vector-only search
+    // Vector-only search with filters
     const vecOnlyQuery = db.prepare(`
       SELECT
         c.chunk_id, c.doc_id, c.snippet, c.line_start, c.line_end,
@@ -277,14 +287,26 @@ export async function searchIndex(
         (1.0 - v.distance) as score
       FROM chunks_vec v
       JOIN chunks c ON c.id = v.chunk_rowid
+      LEFT JOIN documents d ON c.doc_id = d.doc_id
       WHERE v.embedding MATCH ?
         AND v.k = ?
+        AND (? IS NULL OR c.doc_id LIKE ? || '%')
+        AND (? IS NULL OR d.source_name = ?)
       ORDER BY v.distance
       LIMIT ? OFFSET ?
     `);
 
     const embeddingBuffer = new Float32Array(embedding);
-    const vecResults = vecOnlyQuery.all(embeddingBuffer, fetchLimit, limit, offset) as Array<{
+    const vecResults = vecOnlyQuery.all(
+      embeddingBuffer,
+      fetchLimit,
+      pathPrefix,
+      pathPrefix,
+      sourceName,
+      sourceName,
+      limit,
+      offset,
+    ) as Array<{
       chunk_id: string;
       doc_id: string;
       snippet: string;
@@ -328,6 +350,10 @@ export async function searchIndex(
         keywordWeight,
         k,
         semanticWeight,
+        pathPrefix,
+        pathPrefix,
+        sourceName,
+        sourceName,
         limit,
         offset,
       ) as Array<{
@@ -366,14 +392,26 @@ export async function searchIndex(
           (1.0 - v.distance) as score
         FROM chunks_vec v
         JOIN chunks c ON c.id = v.chunk_rowid
+        LEFT JOIN documents d ON c.doc_id = d.doc_id
         WHERE v.embedding MATCH ?
           AND v.k = ?
+          AND (? IS NULL OR c.doc_id LIKE ? || '%')
+          AND (? IS NULL OR d.source_name = ?)
         ORDER BY v.distance
         LIMIT ? OFFSET ?
       `);
 
       const embeddingBuffer = new Float32Array(embedding);
-      const vecResults = vecOnlyQuery.all(embeddingBuffer, fetchLimit, limit, offset) as Array<{
+      const vecResults = vecOnlyQuery.all(
+        embeddingBuffer,
+        fetchLimit,
+        pathPrefix,
+        pathPrefix,
+        sourceName,
+        sourceName,
+        limit,
+        offset,
+      ) as Array<{
         chunk_id: string;
         doc_id: string;
         snippet: string;

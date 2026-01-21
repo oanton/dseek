@@ -31,9 +31,13 @@ dseek add ./docs
 
 ### Search (Primary)
 ```bash
-dseek search "<query>" [--limit N] [--cursor X]
+dseek search "<query>" [--limit N] [--cursor X] [--path <prefix>] [--source <name>]
 ```
 Returns ranked chunks in text format with file paths, line ranges, scores, and snippets.
+
+**Filters:**
+- `--path <prefix>` - Filter results by path prefix (e.g., `--path "docs/api/"`)
+- `--source <name>` - Filter results by source name (for multi-source projects)
 
 Example output:
 ```
@@ -52,6 +56,11 @@ To authenticate API requests, include the Bearer token...
 ```
 
 Use `--json` flag for machine-parseable JSON output.
+
+**Filtered search example:**
+```bash
+dseek search "authentication" --path "docs/api/" --limit 5
+```
 
 ### Chat (with Ollama)
 ```bash

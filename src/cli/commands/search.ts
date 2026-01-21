@@ -18,6 +18,8 @@ export const searchCommand = new Command('search')
   .argument('<query>', 'Search query')
   .option('-l, --limit <number>', 'Maximum results', String(LIMITS.DEFAULT_RESULTS))
   .option('-c, --cursor <cursor>', 'Pagination cursor')
+  .option('--path <prefix>', 'Filter by path prefix (e.g., "docs/api/")')
+  .option('--source <name>', 'Filter by source name')
   .option('--batch <file>', 'Batch search from file (one query per line)')
   .option('--rerank', 'Enable cross-encoder reranking (slower, more accurate)')
   .option('--rerank-top-k <number>', 'Number of candidates to rerank', String(LIMITS.DEFAULT_RERANK_TOP_K))
@@ -39,6 +41,10 @@ export const searchCommand = new Command('search')
           const searchQuery: SearchQuery = {
             query: q,
             limit: parseInt(options.limit, 10),
+            filters: {
+              path_prefix: options.path,
+              source_name: options.source,
+            },
             rerank: options.rerank ?? false,
             rerank_top_k: options.rerank ? parseInt(options.rerankTopK, 10) : undefined,
           };
@@ -61,6 +67,10 @@ export const searchCommand = new Command('search')
         query,
         limit: parseInt(options.limit, 10),
         cursor: options.cursor,
+        filters: {
+          path_prefix: options.path,
+          source_name: options.source,
+        },
         rerank: options.rerank ?? false,
         rerank_top_k: options.rerank ? parseInt(options.rerankTopK, 10) : undefined,
       };
