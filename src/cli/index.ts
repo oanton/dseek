@@ -19,7 +19,7 @@ import { statusCommand } from './commands/status.js';
 import { watchCommand } from './commands/watch.js';
 
 declare const __VERSION__: string;
-const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.0.0';
+const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : '1.0.1';
 
 export function createCLI(): Command {
   const program = new Command();

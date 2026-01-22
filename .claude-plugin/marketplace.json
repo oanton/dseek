@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Marketplace for DSEEK local documentation search CLI plugin",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "plugins": [
     {
       "name": "dseek",
       "source": "./plugins/dseek",
       "description": "Local-first documentation search CLI with hybrid retrieval (semantic + BM25)",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "homepage": "https://github.com/oanton/dseek",
       "repository": "https://github.com/oanton/dseek",
       "license": "MIT",
